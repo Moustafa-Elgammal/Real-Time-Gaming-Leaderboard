@@ -1,0 +1,10 @@
+### top 10
+GET localhost:8080/v1/scores
+
+
+### user rank
+GET localhost:8080/v1/scores/user100000
+
+
+###add user score
+POST localhost:8080/v1/scores/user100000
