@@ -59,7 +59,7 @@ func (s *MySQLStore) migrate() error {
 		id         BIGINT NOT NULL AUTO_INCREMENT,
 		username   VARCHAR(255) NOT NULL,
 		delta      INT NOT NULL DEFAULT 1,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (id, created_at),
 		INDEX idx_created_at (created_at)
 	)

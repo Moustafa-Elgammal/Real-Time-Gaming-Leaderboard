@@ -19,9 +19,9 @@ func init() {
 
 // mockStorer lets each test supply only the functions it needs.
 type mockStorer struct {
-	topNFunc               func(n int) ([]store.UserRank, error)
+	topNFunc                func(n int) ([]store.UserRank, error)
 	getUserNeighborhoodFunc func(username string) ([]store.UserRank, error)
-	incrementScoreFunc     func(username string) error
+	incrementScoreFunc      func(username string) error
 }
 
 func (m *mockStorer) TopN(n int) ([]store.UserRank, error) {
@@ -162,5 +162,23 @@ func TestUpdatePlayerScore_StoreError_Returns500(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want 500", w.Code)
+	}
+}
+
+// Gin's router requires a non-empty path segment for :username so the empty-
+// string guard in UpdatePlayerScore is never reached via normal routing.
+// This test calls the handler directly to verify the defensive check works.
+func TestUpdatePlayerScore_EmptyUsername_Returns400(t *testing.T) {
+	mock := &mockStorer{}
+	h, _ := newTestHandler(mock, 10)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "username", Value: ""}}
+
+	h.UpdatePlayerScore(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", w.Code)
 	}
 }

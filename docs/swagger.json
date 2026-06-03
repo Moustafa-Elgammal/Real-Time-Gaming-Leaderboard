@@ -1,0 +1,179 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Internal leaderboard service. Designed to sit behind a game service that handles player authentication, session management, anti-cheat, and per-player rate limiting. All requests must include the X-Internal-Token header when INTERNAL_API_KEY is configured.",
+        "title": "Real-Time Gaming Leaderboard API",
+        "contact": {
+            "name": "Moustafa Elgammal",
+            "email": "moustafa_algammal@yahoo.com"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/v1/scores": {
+            "get": {
+                "security": [
+                    {
+                        "InternalToken": []
+                    }
+                ],
+                "description": "Returns the top TOP_N players for the current calendar month, ordered by score descending.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "leaderboard"
+                ],
+                "summary": "Get top scores",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/store.UserRank"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/scores/{username}": {
+            "get": {
+                "security": [
+                    {
+                        "InternalToken": []
+                    }
+                ],
+                "description": "Returns the player along with up to USER_NEIGHBORHOOD players ranked immediately above and below them in the current month's leaderboard.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "leaderboard"
+                ],
+                "summary": "Get player rank and neighbors",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Player username",
+                        "name": "username",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/store.UserRank"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Player not on leaderboard",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "InternalToken": []
+                    }
+                ],
+                "description": "Adds 1 point to the player's score for the current month. Called by the game service after it has authenticated the player and validated the score event. Creates the player entry if it does not exist.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "leaderboard"
+                ],
+                "summary": "Increment player score",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Player username",
+                        "name": "username",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing username",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "MySQL or Redis write failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "store.UserRank": {
+            "type": "object",
+            "properties": {
+                "rank": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "score": {
+                    "type": "integer",
+                    "example": 980
+                },
+                "username": {
+                    "type": "string",
+                    "example": "alice"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "InternalToken": {
+            "description": "Shared secret set via INTERNAL_API_KEY env var. Leave empty to disable (local dev).",
+            "type": "apiKey",
+            "name": "X-Internal-Token",
+            "in": "header"
+        }
+    }
+}

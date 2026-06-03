@@ -10,10 +10,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// UserRank represents a single entry in the leaderboard.
 type UserRank struct {
-	Rank     int    `json:"rank"`
-	Username string `json:"username"`
-	Score    int    `json:"score"`
+	Rank     int    `json:"rank"     example:"1"`
+	Username string `json:"username" example:"alice"`
+	Score    int    `json:"score"    example:"980"`
 }
 
 type Store struct {

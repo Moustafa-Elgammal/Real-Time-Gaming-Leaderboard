@@ -36,6 +36,57 @@ go run .
 
 ---
 
+## Swagger UI
+
+The service embeds a Swagger UI that documents every endpoint, shows request/response schemas, and lets you fire live requests directly from the browser.
+
+### Open the UI
+
+1. Start the server (Docker or locally — see [Quick Start](#quick-start)).
+2. Open **`http://localhost:8080/swagger/index.html`** in your browser.
+
+### Authorize requests
+
+The UI has an **Authorize** button (top-right lock icon). If `INTERNAL_API_KEY` is set in your `.env`, click it and paste the key value. The UI will inject `X-Internal-Token: <key>` on every request automatically — identical to what the game service would send.
+
+If `INTERNAL_API_KEY` is empty (the local dev default), skip this step; the middleware is disabled.
+
+### Try an endpoint
+
+1. Expand an endpoint (e.g. **POST /v1/scores/{username}**).
+2. Click **Try it out**.
+3. Fill in the `username` parameter (e.g. `alice`).
+4. Click **Execute**.
+5. The UI shows the `curl` command it ran, the response code, and the response body.
+
+### Spec files
+
+The raw spec is also available as static files served by the running process:
+
+| URL | Format |
+|-----|--------|
+| `http://localhost:8080/swagger/doc.json` | Swagger 2.0 JSON |
+
+The committed files in `docs/` are the canonical source:
+
+| File | Purpose |
+|------|---------|
+| `docs/swagger.json` | Swagger 2.0 JSON — import into Postman, Insomnia, or any OpenAPI-compatible tool |
+| `docs/swagger.yaml` | Same spec in YAML — human-readable, can be pasted into [editor.swagger.io](https://editor.swagger.io) |
+| `docs/docs.go` | Generated Go file that registers the spec with the swag runtime |
+
+### Keep the spec up to date
+
+Whenever you add or change an endpoint, update the annotations in `internal/handler/leaderboard.go` and regenerate:
+
+```bash
+swag init -g main.go --parseDependency --parseInternal
+```
+
+This overwrites `docs/docs.go`, `docs/swagger.json`, and `docs/swagger.yaml`. Commit the regenerated files alongside the handler change.
+
+---
+
 ## Testing
 
 ### In Docker
@@ -235,7 +286,7 @@ CREATE TABLE score_events (
   id         BIGINT NOT NULL AUTO_INCREMENT,
   username   VARCHAR(255) NOT NULL,
   delta      INT NOT NULL DEFAULT 1,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id, created_at),   -- created_at required by InnoDB partition constraint
   INDEX idx_created_at (created_at)
 )
@@ -325,4 +376,4 @@ Items below are planned improvements toward a production-grade, fully scalable l
 - [ ] **WebSocket / Server-Sent Events** — Push live ranking updates to connected clients instead of requiring polling. A Redis pub/sub channel can fan out score-change events to all connected SSE streams.
 - [ ] **Historical leaderboards** — Add `GET /v1/scores?year=2026&month=5` to serve past months. Reads from MySQL (`GetMonthlyScores`) since those Redis keys may have expired.
 - [ ] **gRPC internal API** — Expose a gRPC interface alongside the REST API for lower-latency service-to-service calls (e.g. from a game backend). Share Protobuf definitions as the contract.
-- [ ] **OpenAPI / Swagger spec** — Generate an OpenAPI 3.0 spec from the handler layer (e.g. with `swaggo/swag`) so clients can auto-generate SDKs and the API is self-documented.
+- [x] **OpenAPI / Swagger spec** — Swagger 2.0 spec generated via `swaggo/swag`. The spec lives in `docs/` (committed). Swagger UI is served at `/swagger/index.html` when the server is running. Re-generate after changing handler annotations: `swag init -g main.go --parseDependency --parseInternal`.

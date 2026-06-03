@@ -1,3 +1,14 @@
+// @title           Real-Time Gaming Leaderboard API
+// @version         1.0
+// @description     Internal leaderboard service. Designed to sit behind a game service that handles player authentication, session management, anti-cheat, and per-player rate limiting. All requests must include the X-Internal-Token header when INTERNAL_API_KEY is configured.
+// @contact.name    Moustafa Elgammal
+// @contact.email   moustafa_algammal@yahoo.com
+// @host            localhost:8080
+// @BasePath        /
+// @securityDefinitions.apikey  InternalToken
+// @in              header
+// @name            X-Internal-Token
+// @description     Shared secret set via INTERNAL_API_KEY env var. Leave empty to disable (local dev).
 package main
 
 import (
@@ -9,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "example/real-time-gaming-leaderboard/docs"
 	"example/real-time-gaming-leaderboard/internal/config"
 	"example/real-time-gaming-leaderboard/internal/handler"
 	"example/real-time-gaming-leaderboard/internal/middleware"
@@ -17,6 +29,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 func main() {
@@ -46,6 +60,7 @@ func main() {
 	router.GET("/v1/scores", h.TopN)
 	router.GET("/v1/scores/:username", h.GetUserRank)
 	router.POST("/v1/scores/:username", h.UpdatePlayerScore)
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	srv := &http.Server{Addr: ":8080", Handler: router}
 

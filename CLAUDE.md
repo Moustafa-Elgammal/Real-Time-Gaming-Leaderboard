@@ -14,7 +14,7 @@ go run .
 # Build binary
 go build -o leaderboard .
 
-# Run all tests (no real Redis or MySQL required)
+# Run all unit tests (no real Redis or MySQL required)
 go test ./...
 
 # Run a single package's tests
@@ -22,11 +22,21 @@ go test ./internal/store/...
 go test ./internal/service/...
 go test ./internal/config/...
 
+# Run MySQL integration tests (requires a running MySQL with leaderboard_test database)
+# Docker MySQL must be up: docker compose up -d mysql
+docker exec real-time-gaming-leaderboard-mysql-1 mysql -uroot -ppassword -e "CREATE DATABASE IF NOT EXISTS leaderboard_test;"
+go test -tags integration -count=1 -v ./internal/store/... -run TestIntegration
+# Override DSN: TEST_MYSQL_DSN="user:pass@tcp(host:3306)/leaderboard_test?parseTime=true"
+
 # Run tests via Docker (matches CI)
 docker compose --profile test run --rm test
 
 # Tidy dependencies
 go mod tidy
+
+# Regenerate Swagger docs after changing handler annotations or adding endpoints
+swag init -g main.go --parseDependency --parseInternal
+# Swagger UI available at http://localhost:8080/swagger/index.html when the server is running
 ```
 
 ## Architecture
@@ -34,14 +44,15 @@ go mod tidy
 Internal-only Go HTTP service backed by Redis (live rankings) and MySQL (durable history). It is designed to sit behind a **game service** that handles player authentication, session management, anti-cheat, and per-player rate limiting. The leaderboard service trusts all requests that reach it; the only boundary it enforces is verifying the caller is the game service via a shared secret.
 
 ```
-main.go                              — loads .env, wires mysql → batcher → redis → service → handler
+main.go                              — loads .env, wires mysql → batcher → redis → service → handler; registers /swagger route
 internal/config/config.go            — all env vars with typed defaults
 internal/middleware/auth.go          — InternalAuth: checks X-Internal-Token header (no-op when INTERNAL_API_KEY is empty)
 internal/store/redis.go              — Redis sorted sets: TopN, GetUserNeighborhood, IncrementScore, BulkLoad, IsRecovered
 internal/store/mysql.go              — MySQL: migrate, EnsureMonthPartition, RecordBatch, GetMonthlyScores
 internal/store/batcher.go            — in-memory EventBatcher: aggregates events, flushes bulk to MySQL
 internal/service/leaderboard.go      — coordinator: MySQL-first write order, RecoverCurrentMonth
-internal/handler/leaderboard.go      — Gin HTTP handlers (TopN, GetUserRank, UpdatePlayerScore)
+internal/handler/leaderboard.go      — Gin HTTP handlers (TopN, GetUserRank, UpdatePlayerScore) with swaggo annotations
+docs/                                — Swagger 2.0 spec (docs.go, swagger.json, swagger.yaml); served at /swagger/index.html
 ```
 
 **Stack:** Gin · go-redis/v9 · go-sql-driver/mysql · godotenv
@@ -84,7 +95,7 @@ CREATE TABLE score_events (
   id         BIGINT NOT NULL AUTO_INCREMENT,
   username   VARCHAR(255) NOT NULL,
   delta      INT NOT NULL DEFAULT 1,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id, created_at),
   INDEX idx_created_at (created_at)
 )
@@ -132,6 +143,7 @@ All have defaults. Loaded from `.env` via `godotenv`; Docker Compose overrides `
 - **Service tests** (`service/leaderboard_test.go`) — mock structs with function fields for both stores.
 - **Config tests** (`config/config_test.go`) — set env vars via `t.Setenv`, test defaults/overrides/invalid int fallback.
 - **Middleware tests** (`middleware/auth_test.go`) — tests disabled (empty key), correct token, wrong token, and missing token cases.
+- **MySQL integration tests** (`store/mysql_integration_test.go`, build tag `integration`) — tests `NewMySQL`, schema migration, partition creation, `RecordEvent`, `RecordBatch`, `GetMonthlyScores` cross-month isolation, and `EnsureMonthPartition` idempotency against a real MySQL instance. Uses `leaderboard_test` database; skips gracefully if MySQL is unavailable.
 
 `EventBatcher.Stop()` is idempotent; tests that call `Stop()` explicitly are safe because `t.Cleanup(b.Stop)` is also registered via `newTestBatcher`.
 
