@@ -14,6 +14,7 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("DB_DSN", "")
 	t.Setenv("BATCH_FLUSH_MS", "")
 	t.Setenv("BATCH_SIZE", "")
+	t.Setenv("INTERNAL_API_KEY", "")
 
 	cfg := Load()
 
@@ -43,6 +44,9 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.BatchSize != 500 {
 		t.Errorf("BatchSize: got %d, want 500", cfg.BatchSize)
+	}
+	if cfg.InternalAPIKey != "" {
+		t.Errorf("InternalAPIKey: got %q, want empty", cfg.InternalAPIKey)
 	}
 }
 

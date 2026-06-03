@@ -11,6 +11,7 @@ import (
 
 	"example/real-time-gaming-leaderboard/internal/config"
 	"example/real-time-gaming-leaderboard/internal/handler"
+	"example/real-time-gaming-leaderboard/internal/middleware"
 	"example/real-time-gaming-leaderboard/internal/service"
 	"example/real-time-gaming-leaderboard/internal/store"
 
@@ -41,6 +42,7 @@ func main() {
 	h := handler.New(svc, cfg)
 
 	router := gin.Default()
+	router.Use(middleware.InternalAuth(cfg.InternalAPIKey))
 	router.GET("/v1/scores", h.TopN)
 	router.GET("/v1/scores/:username", h.GetUserRank)
 	router.POST("/v1/scores/:username", h.UpdatePlayerScore)

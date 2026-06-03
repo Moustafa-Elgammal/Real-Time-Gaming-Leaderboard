@@ -15,6 +15,7 @@ type Config struct {
 	DBDSN             string
 	BatchFlushMS      int
 	BatchSize         int
+	InternalAPIKey    string // shared secret with the upstream game service; empty = no auth
 }
 
 func Load() *Config {
@@ -28,6 +29,7 @@ func Load() *Config {
 		DBDSN:             getEnv("DB_DSN", "root:password@tcp(localhost:3306)/leaderboard?parseTime=true"),
 		BatchFlushMS:      getEnvInt("BATCH_FLUSH_MS", 100),
 		BatchSize:         getEnvInt("BATCH_SIZE", 500),
+		InternalAPIKey:    getEnv("INTERNAL_API_KEY", ""),
 	}
 }
 

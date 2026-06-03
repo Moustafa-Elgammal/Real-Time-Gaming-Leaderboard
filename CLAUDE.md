@@ -31,11 +31,12 @@ go mod tidy
 
 ## Architecture
 
-Four-layer Go HTTP service backed by Redis (live rankings) and MySQL (durable history).
+Internal-only Go HTTP service backed by Redis (live rankings) and MySQL (durable history). It is designed to sit behind a **game service** that handles player authentication, session management, anti-cheat, and per-player rate limiting. The leaderboard service trusts all requests that reach it; the only boundary it enforces is verifying the caller is the game service via a shared secret.
 
 ```
 main.go                              — loads .env, wires mysql → batcher → redis → service → handler
 internal/config/config.go            — all env vars with typed defaults
+internal/middleware/auth.go          — InternalAuth: checks X-Internal-Token header (no-op when INTERNAL_API_KEY is empty)
 internal/store/redis.go              — Redis sorted sets: TopN, GetUserNeighborhood, IncrementScore, BulkLoad, IsRecovered
 internal/store/mysql.go              — MySQL: migrate, EnsureMonthPartition, RecordBatch, GetMonthlyScores
 internal/store/batcher.go            — in-memory EventBatcher: aggregates events, flushes bulk to MySQL
@@ -121,6 +122,7 @@ All have defaults. Loaded from `.env` via `godotenv`; Docker Compose overrides `
 | `DB_DSN` | `root:password@tcp(localhost:3306)/leaderboard?parseTime=true` | MySQL DSN |
 | `BATCH_FLUSH_MS` | `100` | Batcher flush interval in milliseconds |
 | `BATCH_SIZE` | `500` | Batcher buffer size that triggers immediate flush |
+| `INTERNAL_API_KEY` | `` | Shared secret with the game service; empty = auth disabled |
 
 ## Testing
 
@@ -129,6 +131,7 @@ All have defaults. Loaded from `.env` via `godotenv`; Docker Compose overrides `
 - **Batcher tests** (`store/batcher_test.go`) — use `mockBatchStore`, no real stores.
 - **Service tests** (`service/leaderboard_test.go`) — mock structs with function fields for both stores.
 - **Config tests** (`config/config_test.go`) — set env vars via `t.Setenv`, test defaults/overrides/invalid int fallback.
+- **Middleware tests** (`middleware/auth_test.go`) — tests disabled (empty key), correct token, wrong token, and missing token cases.
 
 `EventBatcher.Stop()` is idempotent; tests that call `Stop()` explicitly are safe because `t.Cleanup(b.Stop)` is also registered via `newTestBatcher`.
 
