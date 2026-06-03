@@ -6,6 +6,7 @@ COPY . .
 RUN go build -o leaderboard .
 
 FROM alpine:latest
+RUN apk add --no-cache wget
 WORKDIR /app
 COPY --from=builder /app/leaderboard .
 EXPOSE 8080

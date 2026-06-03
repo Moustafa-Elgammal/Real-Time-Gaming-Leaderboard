@@ -89,36 +89,132 @@ This overwrites `docs/docs.go`, `docs/swagger.json`, and `docs/swagger.yaml`. Co
 
 ## Testing
 
-### In Docker
+### Unit tests (no external services required)
+
+Redis tests use `miniredis` (in-process) and MySQL tests use `go-sqlmock`, so no real database is needed.
 
 ```bash
+# Locally
+go test ./...
+
+# In Docker (matches CI)
 docker compose --profile test run --rm test
 ```
 
-### Locally
+### MySQL integration tests
+
+These tests run against a real MySQL instance and are gated behind the `integration` build tag.
 
 ```bash
-go test ./...
+# 1. Make sure MySQL is running and the test database exists
+docker compose up -d mysql
+docker exec real-time-gaming-leaderboard-mysql-1 \
+  mysql -uroot -ppassword -e "CREATE DATABASE IF NOT EXISTS leaderboard_test;"
+
+# 2. Run (use -count=1 to bypass the test cache)
+go test -tags integration -count=1 -v ./internal/store/... -run TestIntegration
 ```
 
-No external services are required — Redis tests use `miniredis` (in-process) and MySQL tests use `go-sqlmock` (no real DB needed).
+Override the DSN if needed: `TEST_MYSQL_DSN="user:pass@tcp(host:3306)/leaderboard_test?parseTime=true"`
+
+---
+
+## Load Testing (k6)
+
+Load tests live in `k6/scripts/` and are run via [k6](https://k6.io). Results stream to InfluxDB in real time and are visualised in a provisioned Grafana dashboard. A self-contained HTML report is also written to `k6/reports/` after every run.
+
+### 1. Start the observability stack
+
+```bash
+docker compose --profile load-test up -d influxdb grafana
+```
+
+- **Grafana:** `http://localhost:3000` — log in with `admin / admin`
+- The **k6 Leaderboard Load Tests** dashboard is pre-provisioned; open it before running a test to watch metrics arrive live.
+
+### 2. Start the app (if not already running)
+
+```bash
+docker compose up -d redis mysql app
+```
+
+### 3. Run a scenario
+
+| Command | What it tests |
+|---------|---------------|
+| `docker compose --profile load-test run --rm k6 run /scripts/full-suite.js` | **Recommended first run.** All three endpoints concurrently — writes + top-N reads + neighborhood reads — for ~5 minutes. Baseline numbers for the scalability roadmap. |
+| `docker compose --profile load-test run --rm k6 run /scripts/01-score-updates.js` | Write path only. Ramps to 300 VUs to saturate the EventBatcher (triggers the 500-event flush constantly). Validates MySQL batch insert throughput. |
+| `docker compose --profile load-test run --rm k6 run /scripts/02-top-scores.js` | Read throughput. 200 VUs against `GET /v1/scores`. Verifies Redis sorted-set reads stay sub-50 ms p95 under concurrency. |
+| `docker compose --profile load-test run --rm k6 run /scripts/03-neighborhood.js` | Neighborhood queries. 100 VUs against `GET /v1/scores/:username`. Tests the ZREVRANK + ZREVRANGEWITHSCORES pipeline latency. |
+| `docker compose --profile load-test run --rm k6 run /scripts/04-spike.js` | Spike test. Uses arrival-rate executor to inject a 10× traffic spike (500 req/s) and measure recovery time. |
+
+> **Note:** `K6_OUT=influxdb=http://influxdb:8086/k6` is set in the k6 service environment so InfluxDB streaming is always active regardless of which script you pass. The service uses `grafana/k6:0.48.0` (the last release with native InfluxDB v1 output built in). Never override this to `grafana/k6:latest` — v0.49+ removed the built-in InfluxDB output.
+
+### 4. View results
+
+**During the test** — open Grafana at `http://localhost:3000`, select the **k6 Leaderboard Load Tests** dashboard. Set the time range to "Last 5 minutes". Panels update every 5 seconds:
+
+| Panel | What to watch |
+|-------|---------------|
+| Stat row (top) | Live totals: requests, RPS, error %, avg/p95/p99 latency |
+| Active Virtual Users | Confirms the VU ramp matches the scenario stages |
+| Request Rate by endpoint | Breaks down RPS per `post-score` / `top-scores` / `neighborhood` |
+| Response Time Percentiles | p50 / p90 / p95 / p99 over time — spot latency creep |
+| Error Rate % | Should stay near 0; spikes during the spike test (04) are expected |
+| P95 Response Time — per Endpoint | Per-endpoint SLO view — thresholds are 200 ms (writes), 50 ms (top-N), 100 ms (neighborhood) |
+| TTFB / Data Throughput | Diagnose whether latency is network or application |
+
+**After the test** — an HTML report and JSON dump are written to `k6/reports/`:
+
+```
+k6/reports/full-suite.html          ← open in any browser
+k6/reports/full-suite.json
+```
+
+The HTML report shows total requests, RPS, error rate, full response-time distribution, and a check pass/fail table — useful for storing run-to-run comparisons.
+
+### Thresholds
+
+Each script defines hard thresholds that cause k6 to exit with a non-zero code if violated:
+
+| Endpoint | p95 threshold | Error rate threshold |
+|----------|--------------|---------------------|
+| POST /v1/scores/:username | 200 ms | < 1% |
+| GET /v1/scores | 50 ms | < 0.1% |
+| GET /v1/scores/:username | 100 ms | < 0.1% |
+| Spike test (mixed) | 1 000 ms writes / 200 ms reads | < 2% |
+
+### Tear down
+
+```bash
+docker compose --profile load-test down
+# or remove volumes too:
+docker compose --profile load-test down -v
+```
 
 ---
 
 ## Project Structure
 
 ```
-main.go                              — entry point: loads config, wires stores/batcher/service/handler
-internal/config/config.go            — reads env vars with typed defaults
-internal/store/redis.go              — Redis data access: sorted sets, bulk load, recovery marker
-internal/store/mysql.go              — MySQL data access: migrate, partitions, batch inserts, history queries
-internal/store/batcher.go            — in-memory event batcher: buffers writes, flushes to MySQL in bulk
-internal/service/leaderboard.go      — coordinator: MySQL-first write order, startup recovery
-internal/handler/leaderboard.go      — Gin HTTP handlers
-Dockerfile                           — multi-stage production image (Go builder → alpine final)
-Dockerfile.test                      — test runner image (Go toolchain, no binary)
-docker-compose.yaml                  — redis + mysql + app + test services
-.env / .env.example                  — local configuration
+main.go                                      — entry point: loads config, wires stores/batcher/service/handler
+internal/config/config.go                    — reads env vars with typed defaults
+internal/middleware/auth.go                  — InternalAuth middleware: checks X-Internal-Token header
+internal/store/redis.go                      — Redis data access: sorted sets, bulk load, recovery marker
+internal/store/mysql.go                      — MySQL data access: migrate, partitions, batch inserts, history queries
+internal/store/batcher.go                    — in-memory event batcher: buffers writes, flushes to MySQL in bulk
+internal/service/leaderboard.go              — coordinator: MySQL-first write order, startup recovery
+internal/handler/leaderboard.go              — Gin HTTP handlers
+docs/                                        — Swagger 2.0 spec (docs.go, swagger.json, swagger.yaml)
+k6/scripts/                                  — k6 load test scenarios (write stress, reads, spike, full suite)
+k6/utils/helpers.js                          — shared k6 utilities: auth params, request wrappers, HTML report generator
+k6/reports/                                  — runtime output: HTML + JSON summaries written after each test run
+grafana/provisioning/                        — auto-provisioned InfluxDB datasource and dashboard directory config
+grafana/dashboards/k6-leaderboard.json       — pre-built Grafana dashboard for k6 results
+Dockerfile                                   — multi-stage production image (Go builder → alpine final, includes wget)
+Dockerfile.test                              — test runner image (Go toolchain, no binary)
+docker-compose.yaml                          — redis + mysql + app + test + load-test stack (influxdb, grafana, k6)
+.env / .env.example                          — local configuration
 ```
 
 ---
@@ -313,6 +409,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 - [ ] **Kubernetes (K8s)** — Package the app as a K8s `Deployment` with a `HorizontalPodAutoscaler` (HPA) that scales on CPU/RPS metrics. Use `PodDisruptionBudget` to keep at least one replica available during rolling updates.
 - [ ] **Helm chart** — Wrap the K8s manifests in a Helm chart for environment-specific overrides (staging vs. production resource limits, replica counts, DSN secrets).
 - [ ] **CI/CD pipeline** — GitHub Actions (or equivalent) that runs `go test ./...`, builds the Docker image, pushes to a registry, and triggers a rolling deploy. Add a gate that blocks deploy if test coverage drops below a threshold.
+- [x] **Load testing (k6)** — k6 scripts for write stress, read throughput, neighborhood queries, and spike scenarios. Results stream to InfluxDB with a provisioned Grafana dashboard. HTML + JSON reports written to `k6/reports/` after each run. See [Load Testing](#load-testing-k6).
 - [ ] **Blue/green or canary deployments** — Route a small percentage of traffic to the new version before full rollout; auto-rollback on error-rate spike.
 - [ ] **Multi-region deployment** — Run app + Redis replicas in multiple regions. Use GeoDNS or a global load balancer (e.g. AWS Global Accelerator) to route users to the nearest region. Write to a primary MySQL region; replicate async to secondaries for recovery reads.
 
@@ -341,7 +438,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 - [ ] **Structured logging** — Replace `log.Printf` with a structured logger (`zap` or `zerolog`). Emit JSON logs with fields: `level`, `timestamp`, `trace_id`, `username`, `latency_ms`, `error`. Structured logs are indexable in log aggregation systems (Loki, Elasticsearch, CloudWatch).
 - [ ] **Distributed tracing** — Instrument with OpenTelemetry (`go.opentelemetry.io/otel`). Propagate trace context across the HTTP handler → service → store chain. Export spans to Jaeger or AWS X-Ray. Critical for diagnosing latency spikes in a multi-service deployment.
 - [ ] **Prometheus metrics** — Expose a `/metrics` endpoint. Track: request rate, error rate, handler latency (p50/p99), batcher buffer depth, batcher flush duration, MySQL insert latency, Redis command latency.
-- [ ] **Grafana dashboards** — Wire Prometheus to Grafana. Create panels for the four golden signals: latency, traffic, errors, saturation (Redis memory %, MySQL connection pool usage).
+- [ ] **Grafana dashboards (production)** — Wire Prometheus to Grafana for production metrics (four golden signals: latency, traffic, errors, saturation). A Grafana instance is already provisioned for k6 load testing (see [Load Testing](#load-testing-k6)); extend it with app-level metrics once Prometheus is wired.
 - [ ] **Alerting** — Set up Alertmanager (or PagerDuty) rules: error rate > 1 %, p99 latency > 200 ms, Redis memory > 80 %, MySQL replication lag > 30 s, batcher flush failures.
 - [ ] **Health endpoints** — Add `/healthz` (liveness: is the process alive?) and `/readyz` (readiness: can it serve traffic — Redis ping + MySQL ping both succeed?). K8s uses these for pod lifecycle management.
 
