@@ -1,0 +1,5 @@
+.env
+.idea
+*.http
+CLAUDE.md
+leaderboard
