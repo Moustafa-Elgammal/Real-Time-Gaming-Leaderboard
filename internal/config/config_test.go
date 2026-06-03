@@ -11,6 +11,9 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("LEADERBOARD_PREFIX", "")
 	t.Setenv("TOP_N", "")
 	t.Setenv("USER_NEIGHBORHOOD", "")
+	t.Setenv("DB_DSN", "")
+	t.Setenv("BATCH_FLUSH_MS", "")
+	t.Setenv("BATCH_SIZE", "")
 
 	cfg := Load()
 
@@ -32,6 +35,15 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.UserNeighborhood != 4 {
 		t.Errorf("UserNeighborhood: got %d, want 4", cfg.UserNeighborhood)
 	}
+	if cfg.DBDSN != "root:password@tcp(localhost:3306)/leaderboard?parseTime=true" {
+		t.Errorf("DBDSN: got %q, want default DSN", cfg.DBDSN)
+	}
+	if cfg.BatchFlushMS != 100 {
+		t.Errorf("BatchFlushMS: got %d, want 100", cfg.BatchFlushMS)
+	}
+	if cfg.BatchSize != 500 {
+		t.Errorf("BatchSize: got %d, want 500", cfg.BatchSize)
+	}
 }
 
 func TestLoad_Overrides(t *testing.T) {
@@ -41,6 +53,7 @@ func TestLoad_Overrides(t *testing.T) {
 	t.Setenv("LEADERBOARD_PREFIX", "game")
 	t.Setenv("TOP_N", "25")
 	t.Setenv("USER_NEIGHBORHOOD", "2")
+	t.Setenv("DB_DSN", "user:pass@tcp(mydb:3306)/myapp?parseTime=true")
 
 	cfg := Load()
 
@@ -61,6 +74,9 @@ func TestLoad_Overrides(t *testing.T) {
 	}
 	if cfg.UserNeighborhood != 2 {
 		t.Errorf("UserNeighborhood: got %d, want 2", cfg.UserNeighborhood)
+	}
+	if cfg.DBDSN != "user:pass@tcp(mydb:3306)/myapp?parseTime=true" {
+		t.Errorf("DBDSN: got %q", cfg.DBDSN)
 	}
 }
 

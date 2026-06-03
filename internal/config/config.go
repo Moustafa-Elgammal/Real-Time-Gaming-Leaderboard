@@ -12,6 +12,9 @@ type Config struct {
 	LeaderboardPrefix string
 	TopN              int
 	UserNeighborhood  int
+	DBDSN             string
+	BatchFlushMS      int
+	BatchSize         int
 }
 
 func Load() *Config {
@@ -22,6 +25,9 @@ func Load() *Config {
 		LeaderboardPrefix: getEnv("LEADERBOARD_PREFIX", "leaderboard"),
 		TopN:              getEnvInt("TOP_N", 10),
 		UserNeighborhood:  getEnvInt("USER_NEIGHBORHOOD", 4),
+		DBDSN:             getEnv("DB_DSN", "root:password@tcp(localhost:3306)/leaderboard?parseTime=true"),
+		BatchFlushMS:      getEnvInt("BATCH_FLUSH_MS", 100),
+		BatchSize:         getEnvInt("BATCH_SIZE", 500),
 	}
 }
 

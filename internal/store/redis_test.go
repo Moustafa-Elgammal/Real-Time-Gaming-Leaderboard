@@ -149,3 +149,58 @@ func TestGetUserNeighborhood_UnknownUser_ReturnsError(t *testing.T) {
 		t.Error("expected error for unknown user, got nil")
 	}
 }
+
+// --- BulkLoad and IsRecovered ---
+
+func TestIsRecovered_FalseOnFreshStore(t *testing.T) {
+	s := newTestStore(t, 4)
+	if s.IsRecovered() {
+		t.Error("expected false on a fresh store, got true")
+	}
+}
+
+func TestBulkLoad_SetsScoresAndMarker(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	scores := map[string]int{"alice": 100, "bob": 200}
+	if err := s.BulkLoad(scores); err != nil {
+		t.Fatalf("BulkLoad: %v", err)
+	}
+
+	if !s.IsRecovered() {
+		t.Error("expected IsRecovered to be true after BulkLoad")
+	}
+
+	ranks, err := s.TopN(10)
+	if err != nil {
+		t.Fatalf("TopN after BulkLoad: %v", err)
+	}
+	if len(ranks) != 2 {
+		t.Fatalf("expected 2 players, got %d", len(ranks))
+	}
+	if ranks[0].Username != "bob" || ranks[0].Score != 200 {
+		t.Errorf("expected bob first with 200, got %+v", ranks[0])
+	}
+	if ranks[1].Username != "alice" || ranks[1].Score != 100 {
+		t.Errorf("expected alice second with 100, got %+v", ranks[1])
+	}
+}
+
+func TestBulkLoad_EmptyScores_SetsMarkerOnly(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	if err := s.BulkLoad(map[string]int{}); err != nil {
+		t.Fatalf("BulkLoad empty: %v", err)
+	}
+	if !s.IsRecovered() {
+		t.Error("expected recovery marker even for empty load")
+	}
+
+	ranks, err := s.TopN(10)
+	if err != nil {
+		t.Fatalf("TopN: %v", err)
+	}
+	if len(ranks) != 0 {
+		t.Errorf("expected empty leaderboard, got %+v", ranks)
+	}
+}

@@ -5,6 +5,19 @@ services:
     ports:
       - "6379:6379"
 
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: leaderboard
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ppassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   app:
     build: .
     ports:
@@ -13,8 +26,12 @@ services:
       - .env
     environment:
       - REDIS_ADDR=redis:6379
+      - DB_DSN=root:password@tcp(mysql:3306)/leaderboard?parseTime=true
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      mysql:
+        condition: service_healthy
 
   test:
     build:

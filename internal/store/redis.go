@@ -17,8 +17,8 @@ type UserRank struct {
 }
 
 type Store struct {
-	client           *redis.Client
-	ctx              context.Context
+	client            *redis.Client
+	ctx               context.Context
 	leaderboardPrefix string
 	userNeighborhood  int
 }
@@ -90,4 +90,21 @@ func (s *Store) GetUserNeighborhood(username string) ([]UserRank, error) {
 
 func (s *Store) IncrementScore(username string) error {
 	return s.client.ZIncrBy(s.ctx, s.currentKey(), 1, username).Err()
+}
+
+func (s *Store) IsRecovered() bool {
+	val, err := s.client.Exists(s.ctx, s.currentKey()+":recovered").Result()
+	return err == nil && val > 0
+}
+
+// BulkLoad writes all scores into the sorted set and sets a recovery marker
+// in a single pipeline. Safe to call with an empty map (marker is still set).
+func (s *Store) BulkLoad(scores map[string]int) error {
+	pipe := s.client.Pipeline()
+	for username, score := range scores {
+		pipe.ZAdd(s.ctx, s.currentKey(), redis.Z{Score: float64(score), Member: username})
+	}
+	pipe.Set(s.ctx, s.currentKey()+":recovered", 1, 0)
+	_, err := pipe.Exec(s.ctx)
+	return err
 }
