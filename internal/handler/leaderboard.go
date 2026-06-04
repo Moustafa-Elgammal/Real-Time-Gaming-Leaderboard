@@ -16,6 +16,7 @@ type Storer interface {
 	TopNPage(offset, limit int) ([]store.UserRank, int64, error)
 	GetUserNeighborhood(username string) ([]store.UserRank, error)
 	IncrementScore(username string) error
+	Subscribe() (<-chan store.ScoreEvent, func(), error)
 }
 
 // PagedResponse wraps a leaderboard page with pagination metadata.
@@ -95,6 +96,43 @@ func (h *Handler) GetUserRank(c *gin.Context) {
 		return
 	}
 	c.IndentedJSON(http.StatusOK, ranks)
+}
+
+// StreamScoreUpdates godoc
+//
+//	@Summary      Stream live score updates (SSE)
+//	@Description  Opens a Server-Sent Events stream. Each `score-update` event carries the player's username, new score, and updated rank. The stream stays open until the client disconnects. Connect via `EventSource` in a browser or any HTTP client that supports `text/event-stream`.
+//	@Tags         leaderboard
+//	@Produce      text/event-stream
+//	@Security     InternalToken
+//	@Success      200  {object}  store.ScoreEvent  "Continuous stream of score-update SSE events"
+//	@Router       /v1/scores/stream [get]
+func (h *Handler) StreamScoreUpdates(c *gin.Context) {
+	events, unsubscribe, err := h.store.Subscribe()
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer unsubscribe()
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			c.SSEvent("score-update", event)
+			c.Writer.Flush()
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
 }
 
 // UpdatePlayerScore godoc

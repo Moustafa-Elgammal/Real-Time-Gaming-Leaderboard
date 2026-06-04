@@ -18,6 +18,7 @@ type ScoreStore interface {
 	TopNPage(offset, limit int) ([]store.UserRank, int64, error)
 	GetUserNeighborhood(username string) ([]store.UserRank, error)
 	IncrementScore(username string) error
+	Subscribe() (<-chan store.ScoreEvent, func(), error)
 	IsRecovered() bool
 	BulkLoad(scores map[string]int) error
 }
@@ -37,6 +38,10 @@ func (s *LeaderboardService) TopN(n int) ([]store.UserRank, error) {
 
 func (s *LeaderboardService) TopNPage(offset, limit int) ([]store.UserRank, int64, error) {
 	return s.redis.TopNPage(offset, limit)
+}
+
+func (s *LeaderboardService) Subscribe() (<-chan store.ScoreEvent, func(), error) {
+	return s.redis.Subscribe()
 }
 
 func (s *LeaderboardService) GetUserNeighborhood(username string) ([]store.UserRank, error) {

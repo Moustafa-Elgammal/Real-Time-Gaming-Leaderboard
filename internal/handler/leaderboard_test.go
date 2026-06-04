@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"example/real-time-gaming-leaderboard/internal/config"
@@ -22,6 +23,7 @@ type mockStorer struct {
 	topNPageFunc            func(offset, limit int) ([]store.UserRank, int64, error)
 	getUserNeighborhoodFunc func(username string) ([]store.UserRank, error)
 	incrementScoreFunc      func(username string) error
+	subscribeFunc           func() (<-chan store.ScoreEvent, func(), error)
 }
 
 func (m *mockStorer) TopNPage(offset, limit int) ([]store.UserRank, int64, error) {
@@ -36,11 +38,16 @@ func (m *mockStorer) IncrementScore(username string) error {
 	return m.incrementScoreFunc(username)
 }
 
+func (m *mockStorer) Subscribe() (<-chan store.ScoreEvent, func(), error) {
+	return m.subscribeFunc()
+}
+
 func newTestHandler(s Storer, topN int) (*Handler, *gin.Engine) {
 	cfg := &config.Config{TopN: topN}
 	h := New(s, cfg)
 	r := gin.New()
 	r.GET("/v1/scores", h.TopN)
+	r.GET("/v1/scores/stream", h.StreamScoreUpdates)
 	r.GET("/v1/scores/:username", h.GetUserRank)
 	r.POST("/v1/scores/:username", h.UpdatePlayerScore)
 	return h, r
@@ -258,6 +265,113 @@ func TestUpdatePlayerScore_StoreError_Returns500(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want 500", w.Code)
+	}
+}
+
+// --- StreamScoreUpdates (SSE) ---
+
+func TestStreamScoreUpdates_SendsEvent(t *testing.T) {
+	// Buffered channel with one event; closing it terminates the stream.
+	ch := make(chan store.ScoreEvent, 1)
+	ch <- store.ScoreEvent{Username: "alice", Score: 10, Rank: 1}
+	close(ch)
+
+	mock := &mockStorer{
+		subscribeFunc: func() (<-chan store.ScoreEvent, func(), error) {
+			return ch, func() {}, nil
+		},
+	}
+	_, r := newTestHandler(mock, 10)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/scores/stream", nil))
+
+	body := w.Body.String()
+	if !strings.Contains(body, "score-update") {
+		t.Errorf("expected SSE event name in body, got: %q", body)
+	}
+	if !strings.Contains(body, "alice") {
+		t.Errorf("expected username in body, got: %q", body)
+	}
+}
+
+func TestStreamScoreUpdates_MultipleEvents(t *testing.T) {
+	ch := make(chan store.ScoreEvent, 3)
+	ch <- store.ScoreEvent{Username: "alice", Score: 10, Rank: 1}
+	ch <- store.ScoreEvent{Username: "bob", Score: 9, Rank: 2}
+	ch <- store.ScoreEvent{Username: "carol", Score: 8, Rank: 3}
+	close(ch)
+
+	mock := &mockStorer{
+		subscribeFunc: func() (<-chan store.ScoreEvent, func(), error) {
+			return ch, func() {}, nil
+		},
+	}
+	_, r := newTestHandler(mock, 10)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/scores/stream", nil))
+
+	body := w.Body.String()
+	for _, name := range []string{"alice", "bob", "carol"} {
+		if !strings.Contains(body, name) {
+			t.Errorf("expected %q in SSE body, got: %q", name, body)
+		}
+	}
+}
+
+func TestStreamScoreUpdates_SubscribeError_Returns500(t *testing.T) {
+	mock := &mockStorer{
+		subscribeFunc: func() (<-chan store.ScoreEvent, func(), error) {
+			return nil, nil, errors.New("redis unavailable")
+		},
+	}
+	_, r := newTestHandler(mock, 10)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/scores/stream", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want 500", w.Code)
+	}
+}
+
+func TestStreamScoreUpdates_UnsubscribeCalledOnExit(t *testing.T) {
+	ch := make(chan store.ScoreEvent)
+	close(ch)
+
+	unsubscribeCalled := false
+	mock := &mockStorer{
+		subscribeFunc: func() (<-chan store.ScoreEvent, func(), error) {
+			return ch, func() { unsubscribeCalled = true }, nil
+		},
+	}
+	_, r := newTestHandler(mock, 10)
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/scores/stream", nil))
+
+	if !unsubscribeCalled {
+		t.Error("expected unsubscribe to be called when stream exits")
+	}
+}
+
+func TestStreamScoreUpdates_ContentTypeIsEventStream(t *testing.T) {
+	ch := make(chan store.ScoreEvent)
+	close(ch)
+
+	mock := &mockStorer{
+		subscribeFunc: func() (<-chan store.ScoreEvent, func(), error) {
+			return ch, func() {}, nil
+		},
+	}
+	_, r := newTestHandler(mock, 10)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/scores/stream", nil))
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Errorf("Content-Type: got %q, want text/event-stream", ct)
 	}
 }
 

@@ -58,6 +58,7 @@ func main() {
 	router := gin.Default()
 	router.Use(middleware.InternalAuth(cfg.InternalAPIKey))
 	router.GET("/v1/scores", h.TopN)
+	router.GET("/v1/scores/stream", h.StreamScoreUpdates)
 	router.GET("/v1/scores/:username", h.GetUserRank)
 	router.POST("/v1/scores/:username", h.UpdatePlayerScore)
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

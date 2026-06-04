@@ -7,6 +7,7 @@ An internal HTTP service that tracks player scores and rankings in real time. It
 ## Core Features
 
 - **Live rankings** — Redis sorted sets serve paginated top scores and player-neighborhood queries with sub-millisecond latency. The top-scores endpoint supports `?page` / `?page_size` (1–100) and returns a `total` player count alongside each page.
+- **Real-time push (SSE)** — `GET /v1/scores/stream` opens a Server-Sent Events connection. Every successful score increment publishes a `score-update` event carrying the player's username, new score, and new rank. Backed by Redis pub/sub; no polling required.
 - **Durable history** — Every score increment is persisted to MySQL as a `score_events` record before Redis is updated. If MySQL fails, Redis is not touched.
 - **Startup recovery** — On boot the service checks whether the current month's Redis key has already been populated. If not, it replays `score_events` from MySQL and rebuilds the sorted set. A recovery marker key prevents duplicate replays across multiple restarts or instances.
 - **High-throughput write batching** — Instead of one INSERT per request, an in-memory `EventBatcher` aggregates events and flushes them to MySQL in a single multi-value `INSERT` every 100 ms (or when the buffer reaches 500 events). At 5 000 writes/second this reduces MySQL insert rate from 5 000/s to roughly 10/s.
@@ -263,8 +264,9 @@ Redis is updated immediately so live rankings are always current. MySQL receives
 ### Read path
 
 ```
-GET /v1/scores            → Redis pipeline: ZREVRANGEWITHSCORES (page slice) + ZCARD (total)
-GET /v1/scores/:username  → Redis ZREVRANK + ZREVRANGEWITHSCORES (neighborhood)
+GET /v1/scores              → Redis pipeline: ZREVRANGEWITHSCORES (page slice) + ZCARD (total)
+GET /v1/scores/:username    → Redis ZREVRANK + ZREVRANGEWITHSCORES (neighborhood)
+GET /v1/scores/stream (SSE) → Redis pub/sub: receive score-update events as they happen
 ```
 
 All leaderboard reads go directly to Redis.
@@ -381,6 +383,47 @@ POST /v1/scores/:username
 
 ---
 
+### Stream live score updates (SSE)
+
+Opens a persistent Server-Sent Events connection. Every time any player's score is incremented, a `score-update` event is pushed to all connected clients in real time via Redis pub/sub.
+
+```
+GET /v1/scores/stream
+Accept: text/event-stream
+```
+
+**Stream format**
+```
+event: score-update
+data: {"username":"alice","score":981,"rank":1}
+
+event: score-update
+data: {"username":"bob","score":870,"rank":2}
+```
+
+Each `data` field is a JSON object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | Player who was just scored |
+| `score` | int | Player's new total score for the current month |
+| `rank` | int | Player's new rank (1-based, lower is better) |
+
+**Connecting from a browser**
+```js
+const es = new EventSource('http://localhost:8080/v1/scores/stream', {
+  headers: { 'X-Internal-Token': '<key>' }   // omit if auth disabled
+});
+es.addEventListener('score-update', e => {
+  const { username, score, rank } = JSON.parse(e.data);
+  console.log(`${username} is now rank ${rank} with ${score} pts`);
+});
+```
+
+The stream stays open until the client calls `es.close()` or the server shuts down. The service sends no heartbeat — reconnect logic is the client's responsibility.
+
+---
+
 ## Data Model
 
 ### Redis — live rankings
@@ -484,7 +527,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 ### API & Developer Experience
 
 - [x] **Pagination** — `GET /v1/scores` accepts `?page` and `?page_size` (1–100). Response includes `data`, `page`, `page_size`, and `total` (live `ZCARD`). Out-of-range pages return an empty `data` array with the correct total.
-- [ ] **WebSocket / Server-Sent Events** — Push live ranking updates to connected clients instead of requiring polling. A Redis pub/sub channel can fan out score-change events to all connected SSE streams.
+- [x] **Server-Sent Events** — `GET /v1/scores/stream` pushes a `score-update` event (username, score, rank) to all connected clients on every score increment. Backed by Redis pub/sub; `IncrementScore` pipelines `ZINCRBY + ZREVRANK` and publishes the result best-effort.
 - [ ] **Historical leaderboards** — Add `GET /v1/scores?year=2026&month=5` to serve past months. Reads from MySQL (`GetMonthlyScores`) since those Redis keys may have expired.
 - [ ] **gRPC internal API** — Expose a gRPC interface alongside the REST API for lower-latency service-to-service calls (e.g. from a game backend). Share Protobuf definitions as the contract.
 - [x] **OpenAPI / Swagger spec** — Swagger 2.0 spec generated via `swaggo/swag`. The spec lives in `docs/` (committed). Swagger UI is served at `/swagger/index.html` when the server is running. Re-generate after changing handler annotations: `swag init -g main.go --parseDependency --parseInternal`.

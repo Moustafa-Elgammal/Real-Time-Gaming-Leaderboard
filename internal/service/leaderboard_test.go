@@ -27,6 +27,7 @@ type mockRedis struct {
 	topNPageFunc            func(offset, limit int) ([]store.UserRank, int64, error)
 	getUserNeighborhoodFunc func(username string) ([]store.UserRank, error)
 	incrementScoreFunc      func(username string) error
+	subscribeFunc           func() (<-chan store.ScoreEvent, func(), error)
 	isRecoveredFunc         func() bool
 	bulkLoadFunc            func(scores map[string]int) error
 }
@@ -37,6 +38,10 @@ func (m *mockRedis) TopN(n int) ([]store.UserRank, error) {
 
 func (m *mockRedis) TopNPage(offset, limit int) ([]store.UserRank, int64, error) {
 	return m.topNPageFunc(offset, limit)
+}
+
+func (m *mockRedis) Subscribe() (<-chan store.ScoreEvent, func(), error) {
+	return m.subscribeFunc()
 }
 
 func (m *mockRedis) GetUserNeighborhood(username string) ([]store.UserRank, error) {
@@ -112,6 +117,30 @@ func TestTopN_DelegatesToRedis(t *testing.T) {
 	got, err := svc.TopN(10)
 	if err != nil || len(got) != 1 || got[0].Username != "alice" {
 		t.Errorf("TopN: err=%v, got=%+v", err, got)
+	}
+}
+
+func TestSubscribe_DelegatesToRedis(t *testing.T) {
+	ch := make(chan store.ScoreEvent)
+	cleanupCalled := false
+
+	svc := New(
+		&mockMySQL{},
+		&mockRedis{subscribeFunc: func() (<-chan store.ScoreEvent, func(), error) {
+			return ch, func() { cleanupCalled = true }, nil
+		}},
+	)
+
+	gotCh, cleanup, err := svc.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if gotCh != ch {
+		t.Error("expected the same channel to be returned")
+	}
+	cleanup()
+	if !cleanupCalled {
+		t.Error("expected cleanup to be called")
 	}
 }
 

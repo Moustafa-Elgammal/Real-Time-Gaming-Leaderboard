@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"example/real-time-gaming-leaderboard/internal/config"
@@ -15,6 +17,13 @@ type UserRank struct {
 	Rank     int    `json:"rank"     example:"1"`
 	Username string `json:"username" example:"alice"`
 	Score    int    `json:"score"    example:"980"`
+}
+
+// ScoreEvent is published on the score-updates channel after every successful increment.
+type ScoreEvent struct {
+	Username string `json:"username" example:"alice"`
+	Score    int    `json:"score"    example:"981"`
+	Rank     int    `json:"rank"     example:"1"`
 }
 
 type Store struct {
@@ -41,6 +50,10 @@ func New(cfg *config.Config) *Store {
 func (s *Store) currentKey() string {
 	now := time.Now()
 	return fmt.Sprintf("%s-%d-%d", s.leaderboardPrefix, now.Year(), now.Month())
+}
+
+func (s *Store) updatesChannel() string {
+	return s.leaderboardPrefix + ":score-updates"
 }
 
 func (s *Store) TopN(n int) ([]UserRank, error) {
@@ -114,8 +127,51 @@ func (s *Store) GetUserNeighborhood(username string) ([]UserRank, error) {
 	return ranks, nil
 }
 
+// IncrementScore increments the player's score by 1 and publishes a ScoreEvent
+// to the score-updates pub/sub channel. The publish is best-effort — a failure
+// does not fail the increment.
 func (s *Store) IncrementScore(username string) error {
-	return s.client.ZIncrBy(s.ctx, s.currentKey(), 1, username).Err()
+	key := s.currentKey()
+	pipe := s.client.Pipeline()
+	incrCmd := pipe.ZIncrBy(s.ctx, key, 1, username)
+	rankCmd := pipe.ZRevRank(s.ctx, key, username)
+	if _, err := pipe.Exec(s.ctx); err != nil {
+		return err
+	}
+
+	event := ScoreEvent{
+		Username: username,
+		Score:    int(incrCmd.Val()),
+		Rank:     int(rankCmd.Val()) + 1,
+	}
+	if data, err := json.Marshal(event); err == nil {
+		s.client.Publish(s.ctx, s.updatesChannel(), string(data))
+	}
+	return nil
+}
+
+// Subscribe returns a channel of ScoreEvents and a cleanup function.
+// The caller must call cleanup when done to close the Redis subscription.
+func (s *Store) Subscribe() (<-chan ScoreEvent, func(), error) {
+	pubsub := s.client.Subscribe(s.ctx, s.updatesChannel())
+	ch := make(chan ScoreEvent, 64)
+
+	go func() {
+		defer close(ch)
+		for msg := range pubsub.Channel() {
+			var event ScoreEvent
+			if json.Unmarshal([]byte(msg.Payload), &event) != nil {
+				continue
+			}
+			select {
+			case ch <- event:
+			default: // drop if consumer is slow
+			}
+		}
+	}()
+
+	var once sync.Once
+	return ch, func() { once.Do(func() { pubsub.Close() }) }, nil
 }
 
 func (s *Store) IsRecovered() bool {

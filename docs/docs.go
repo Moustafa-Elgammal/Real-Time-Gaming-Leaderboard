@@ -77,6 +77,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/scores/stream": {
+            "get": {
+                "security": [
+                    {
+                        "InternalToken": []
+                    }
+                ],
+                "description": "Opens a Server-Sent Events stream. Each ` + "`" + `score-update` + "`" + ` event carries the player's username, new score, and updated rank. The stream stays open until the client disconnects. Connect via ` + "`" + `EventSource` + "`" + ` in a browser or any HTTP client that supports ` + "`" + `text/event-stream` + "`" + `.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "leaderboard"
+                ],
+                "summary": "Stream live score updates (SSE)",
+                "responses": {
+                    "200": {
+                        "description": "Continuous stream of score-update SSE events",
+                        "schema": {
+                            "$ref": "#/definitions/store.ScoreEvent"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/scores/{username}": {
             "get": {
                 "security": [
@@ -198,6 +223,23 @@ const docTemplate = `{
                 "total": {
                     "type": "integer",
                     "example": 150
+                }
+            }
+        },
+        "store.ScoreEvent": {
+            "type": "object",
+            "properties": {
+                "rank": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "score": {
+                    "type": "integer",
+                    "example": 981
+                },
+                "username": {
+                    "type": "string",
+                    "example": "alice"
                 }
             }
         },

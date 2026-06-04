@@ -47,11 +47,11 @@ Internal-only Go HTTP service backed by Redis (live rankings) and MySQL (durable
 main.go                              — loads .env, wires mysql → batcher → redis → service → handler; registers /swagger route
 internal/config/config.go            — all env vars with typed defaults
 internal/middleware/auth.go          — InternalAuth: checks X-Internal-Token header (no-op when INTERNAL_API_KEY is empty)
-internal/store/redis.go              — Redis sorted sets: TopN, TopNPage, GetUserNeighborhood, IncrementScore, BulkLoad, IsRecovered
+internal/store/redis.go              — Redis sorted sets: TopN, TopNPage, GetUserNeighborhood, IncrementScore (pipeline + pub/sub), Subscribe, BulkLoad, IsRecovered
 internal/store/mysql.go              — MySQL: migrate, EnsureMonthPartition, RecordBatch, GetMonthlyScores
 internal/store/batcher.go            — in-memory EventBatcher: aggregates events, flushes bulk to MySQL
 internal/service/leaderboard.go      — coordinator: MySQL-first write order, RecoverCurrentMonth
-internal/handler/leaderboard.go      — Gin HTTP handlers (TopN, GetUserRank, UpdatePlayerScore) with swaggo annotations
+internal/handler/leaderboard.go      — Gin HTTP handlers (TopN, StreamScoreUpdates, GetUserRank, UpdatePlayerScore) with swaggo annotations
 docs/                                — Swagger 2.0 spec (docs.go, swagger.json, swagger.yaml); served at /swagger/index.html
 ```
 
@@ -65,14 +65,26 @@ POST /v1/scores/:username
         ├─ EventBatcher.RecordEvent   buffer[username]++
         │       └─ at 500 events or every 100ms → MySQLStore.RecordBatch (multi-value INSERT)
         │
-        └─ RedisStore.IncrementScore  ZINCRBY (immediate, live ranking)
+        └─ RedisStore.IncrementScore  pipeline: ZINCRBY + ZREVRANK → PUBLISH score-updates (best-effort)
 ```
 
-MySQL write is attempted first; Redis is only updated on success.
+MySQL write is attempted first; Redis is only updated on success. The pub/sub publish is best-effort — a failure does not fail the increment.
 
 ### Read path
 
 All reads go directly to Redis sorted sets — no MySQL involved.
+
+### SSE push path
+
+```
+GET /v1/scores/stream
+        │
+        └─ RedisStore.Subscribe → SUBSCRIBE leaderboard:score-updates
+                └─ goroutine forwards pub/sub messages to a Go channel
+                        └─ handler loop: select { event → SSEvent | ctx.Done → return }
+```
+
+Each connected SSE client holds one Redis pub/sub subscription. The subscription is cleaned up on client disconnect via `defer unsubscribe()`.
 
 ### Startup recovery
 
@@ -115,8 +127,9 @@ PARTITION BY RANGE COLUMNS(created_at) (
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/v1/scores` | Paginated leaderboard — `?page=1&page_size=TOP_N` (1–100); returns `PagedResponse` |
+| GET | `/v1/scores/stream` | SSE stream — pushes `score-update` events (username, score, rank) via Redis pub/sub |
 | GET | `/v1/scores/:username` | Player + `USER_NEIGHBORHOOD` above/below |
-| POST | `/v1/scores/:username` | Increment score by 1 (MySQL first, then Redis) |
+| POST | `/v1/scores/:username` | Increment score by 1 (MySQL first, then Redis + pub/sub publish) |
 
 ### Pagination — `GET /v1/scores`
 
@@ -159,11 +172,11 @@ All have defaults. Loaded from `.env` via `godotenv`; Docker Compose overrides `
 
 ## Testing
 
-- **Redis tests** (`store/redis_test.go`) — use `miniredis.RunT(t)`, no real Redis. Covers `TopNPage` pagination (first page, second page, offset beyond end, empty leaderboard).
+- **Redis tests** (`store/redis_test.go`) — use `miniredis.RunT(t)`, no real Redis. Covers `TopNPage` pagination (first page, second page, offset beyond end, empty leaderboard); `IncrementScore` pub/sub publish (event received, rank reflects current standing); `Subscribe` idempotent unsubscribe.
 - **MySQL tests** (`store/mysql_test.go`) — use `go-sqlmock`, no real MySQL.
 - **Batcher tests** (`store/batcher_test.go`) — use `mockBatchStore`, no real stores.
 - **Service tests** (`service/leaderboard_test.go`) — mock structs with function fields for both stores. Covers `TopNPage` delegation.
-- **Handler tests** (`handler/leaderboard_test.go`) — cover default page, explicit page/page_size, invalid params (400), store error (500), empty leaderboard, and max page_size boundary.
+- **Handler tests** (`handler/leaderboard_test.go`) — cover default page, explicit page/page_size, invalid params (400), store error (500), empty leaderboard, and max page_size boundary; SSE: single event, multiple events, subscribe error (500), unsubscribe on exit, correct `Content-Type`.
 - **Config tests** (`config/config_test.go`) — set env vars via `t.Setenv`, test defaults/overrides/invalid int fallback.
 - **Middleware tests** (`middleware/auth_test.go`) — tests disabled (empty key), correct token, wrong token, and missing token cases.
 - **MySQL integration tests** (`store/mysql_integration_test.go`, build tag `integration`) — tests `NewMySQL`, schema migration, partition creation, `RecordEvent`, `RecordBatch`, `GetMonthlyScores` cross-month isolation, and `EnsureMonthPartition` idempotency against a real MySQL instance. Uses `leaderboard_test` database; skips gracefully if MySQL is unavailable.

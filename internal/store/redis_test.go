@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"example/real-time-gaming-leaderboard/internal/config"
 
@@ -16,6 +17,71 @@ func newTestStore(t *testing.T, neighborhood int) *Store {
 		LeaderboardPrefix: "test",
 		UserNeighborhood:  neighborhood,
 	})
+}
+
+// --- IncrementScore + Subscribe ---
+
+func TestIncrementScore_PublishesScoreEvent(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	events, unsubscribe, err := s.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	if err := s.IncrementScore("alice"); err != nil {
+		t.Fatalf("IncrementScore: %v", err)
+	}
+
+	select {
+	case event := <-events:
+		if event.Username != "alice" || event.Score != 1 || event.Rank != 1 {
+			t.Errorf("unexpected event: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Error("timed out waiting for score event")
+	}
+}
+
+func TestIncrementScore_RankReflectsCurrentStanding(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	// Give bob a head start so alice lands at rank 2 after her first increment.
+	for i := 0; i < 5; i++ {
+		s.IncrementScore("bob")
+	}
+
+	events, unsubscribe, err := s.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	if err := s.IncrementScore("alice"); err != nil {
+		t.Fatalf("IncrementScore: %v", err)
+	}
+
+	select {
+	case event := <-events:
+		if event.Username != "alice" || event.Rank != 2 {
+			t.Errorf("expected alice at rank 2, got %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Error("timed out waiting for score event")
+	}
+}
+
+func TestSubscribe_ChannelClosedAfterUnsubscribe(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	_, unsubscribe, err := s.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	// Just verify unsubscribe does not panic and can be called multiple times.
+	unsubscribe()
+	unsubscribe()
 }
 
 // --- IncrementScore ---

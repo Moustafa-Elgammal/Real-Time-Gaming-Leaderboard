@@ -1,10 +1,19 @@
-### top 10
+### top 10 (first page)
 GET localhost:8080/v1/scores
+
+
+### top 10 (page 2, 5 per page)
+GET localhost:8080/v1/scores?page=2&page_size=5
+
+
+### live score updates (SSE — keep connection open)
+GET localhost:8080/v1/scores/stream
+Accept: text/event-stream
 
 
 ### user rank
 GET localhost:8080/v1/scores/user100000
 
 
-###add user score
+### add user score
 POST localhost:8080/v1/scores/user100000

@@ -16,6 +16,18 @@ definitions:
         example: 150
         type: integer
     type: object
+  store.ScoreEvent:
+    properties:
+      rank:
+        example: 1
+        type: integer
+      score:
+        example: 981
+        type: integer
+      username:
+        example: alice
+        type: string
+    type: object
   store.UserRank:
     properties:
       rank:
@@ -144,6 +156,24 @@ paths:
       security:
       - InternalToken: []
       summary: Increment player score
+      tags:
+      - leaderboard
+  /v1/scores/stream:
+    get:
+      description: Opens a Server-Sent Events stream. Each `score-update` event carries
+        the player's username, new score, and updated rank. The stream stays open
+        until the client disconnects. Connect via `EventSource` in a browser or any
+        HTTP client that supports `text/event-stream`.
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Continuous stream of score-update SSE events
+          schema:
+            $ref: '#/definitions/store.ScoreEvent'
+      security:
+      - InternalToken: []
+      summary: Stream live score updates (SSE)
       tags:
       - leaderboard
 securityDefinitions:
