@@ -24,6 +24,7 @@ func (m *mockMySQL) GetMonthlyScores(year, month int) (map[string]int, error) {
 
 type mockRedis struct {
 	topNFunc                func(n int) ([]store.UserRank, error)
+	topNPageFunc            func(offset, limit int) ([]store.UserRank, int64, error)
 	getUserNeighborhoodFunc func(username string) ([]store.UserRank, error)
 	incrementScoreFunc      func(username string) error
 	isRecoveredFunc         func() bool
@@ -32,6 +33,10 @@ type mockRedis struct {
 
 func (m *mockRedis) TopN(n int) ([]store.UserRank, error) {
 	return m.topNFunc(n)
+}
+
+func (m *mockRedis) TopNPage(offset, limit int) ([]store.UserRank, int64, error) {
+	return m.topNPageFunc(offset, limit)
 }
 
 func (m *mockRedis) GetUserNeighborhood(username string) ([]store.UserRank, error) {
@@ -107,6 +112,24 @@ func TestTopN_DelegatesToRedis(t *testing.T) {
 	got, err := svc.TopN(10)
 	if err != nil || len(got) != 1 || got[0].Username != "alice" {
 		t.Errorf("TopN: err=%v, got=%+v", err, got)
+	}
+}
+
+func TestTopNPage_DelegatesToRedis(t *testing.T) {
+	want := []store.UserRank{{Rank: 11, Username: "bob", Score: 50}}
+	svc := New(
+		&mockMySQL{},
+		&mockRedis{topNPageFunc: func(offset, limit int) ([]store.UserRank, int64, error) {
+			if offset != 10 || limit != 10 {
+				t.Errorf("expected offset=10 limit=10, got offset=%d limit=%d", offset, limit)
+			}
+			return want, 25, nil
+		}},
+	)
+
+	got, total, err := svc.TopNPage(10, 10)
+	if err != nil || len(got) != 1 || got[0].Username != "bob" || total != 25 {
+		t.Errorf("TopNPage: err=%v, got=%+v, total=%d", err, got, total)
 	}
 }
 

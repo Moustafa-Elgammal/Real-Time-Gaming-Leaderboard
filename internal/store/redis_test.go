@@ -94,6 +94,89 @@ func TestTopN_EmptyLeaderboard_ReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+// --- TopNPage ---
+
+func TestTopNPage_FirstPage(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	for _, name := range []string{"p1", "p2", "p3", "p4", "p5"} {
+		for i := 0; i < 10; i++ {
+			s.IncrementScore(name)
+		}
+	}
+	// Give p1 the highest score so ordering is deterministic.
+	for i := 0; i < 50; i++ {
+		s.IncrementScore("p1")
+	}
+
+	ranks, total, err := s.TopNPage(0, 3)
+	if err != nil {
+		t.Fatalf("TopNPage: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total=5, got %d", total)
+	}
+	if len(ranks) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(ranks))
+	}
+	if ranks[0].Rank != 1 || ranks[1].Rank != 2 || ranks[2].Rank != 3 {
+		t.Errorf("wrong rank values: %+v", ranks)
+	}
+}
+
+func TestTopNPage_SecondPage(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	scores := map[string]int{"p1": 50, "p2": 40, "p3": 30, "p4": 20, "p5": 10}
+	for name, score := range scores {
+		for i := 0; i < score; i++ {
+			s.IncrementScore(name)
+		}
+	}
+
+	ranks, total, err := s.TopNPage(3, 3)
+	if err != nil {
+		t.Fatalf("TopNPage: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total=5, got %d", total)
+	}
+	if len(ranks) != 2 {
+		t.Fatalf("expected 2 results (page beyond end), got %d", len(ranks))
+	}
+	if ranks[0].Rank != 4 || ranks[1].Rank != 5 {
+		t.Errorf("wrong ranks on second page: %+v", ranks)
+	}
+}
+
+func TestTopNPage_OffsetBeyondEnd_ReturnsEmpty(t *testing.T) {
+	s := newTestStore(t, 4)
+	s.IncrementScore("only")
+
+	ranks, total, err := s.TopNPage(10, 5)
+	if err != nil {
+		t.Fatalf("TopNPage: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected total=1, got %d", total)
+	}
+	if len(ranks) != 0 {
+		t.Errorf("expected empty slice, got %+v", ranks)
+	}
+}
+
+func TestTopNPage_EmptyLeaderboard(t *testing.T) {
+	s := newTestStore(t, 4)
+
+	ranks, total, err := s.TopNPage(0, 10)
+	if err != nil {
+		t.Fatalf("TopNPage: %v", err)
+	}
+	if total != 0 || len(ranks) != 0 {
+		t.Errorf("expected empty result, got ranks=%+v total=%d", ranks, total)
+	}
+}
+
 // --- GetUserNeighborhood ---
 
 func TestGetUserNeighborhood_ReturnsCorrectWindow(t *testing.T) {

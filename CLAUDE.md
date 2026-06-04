@@ -47,7 +47,7 @@ Internal-only Go HTTP service backed by Redis (live rankings) and MySQL (durable
 main.go                              — loads .env, wires mysql → batcher → redis → service → handler; registers /swagger route
 internal/config/config.go            — all env vars with typed defaults
 internal/middleware/auth.go          — InternalAuth: checks X-Internal-Token header (no-op when INTERNAL_API_KEY is empty)
-internal/store/redis.go              — Redis sorted sets: TopN, GetUserNeighborhood, IncrementScore, BulkLoad, IsRecovered
+internal/store/redis.go              — Redis sorted sets: TopN, TopNPage, GetUserNeighborhood, IncrementScore, BulkLoad, IsRecovered
 internal/store/mysql.go              — MySQL: migrate, EnsureMonthPartition, RecordBatch, GetMonthlyScores
 internal/store/batcher.go            — in-memory EventBatcher: aggregates events, flushes bulk to MySQL
 internal/service/leaderboard.go      — coordinator: MySQL-first write order, RecoverCurrentMonth
@@ -114,9 +114,31 @@ PARTITION BY RANGE COLUMNS(created_at) (
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/scores` | Top `TOP_N` players, score descending |
+| GET | `/v1/scores` | Paginated leaderboard — `?page=1&page_size=TOP_N` (1–100); returns `PagedResponse` |
 | GET | `/v1/scores/:username` | Player + `USER_NEIGHBORHOOD` above/below |
 | POST | `/v1/scores/:username` | Increment score by 1 (MySQL first, then Redis) |
+
+### Pagination — `GET /v1/scores`
+
+Query parameters:
+
+| Param | Default | Constraints | Description |
+|-------|---------|-------------|-------------|
+| `page` | `1` | ≥ 1 | Page number (1-based) |
+| `page_size` | `TOP_N` | 1–100 | Entries per page |
+
+Response shape (`PagedResponse`):
+
+```json
+{
+  "data":      [ { "rank": 1, "username": "alice", "score": 980 }, ... ],
+  "page":      1,
+  "page_size": 10,
+  "total":     150
+}
+```
+
+`total` is the live count of distinct players on the current month's leaderboard (from Redis `ZCARD`). Out-of-range pages return an empty `data` array with the correct `total`.
 
 ## Environment Variables
 
@@ -137,10 +159,11 @@ All have defaults. Loaded from `.env` via `godotenv`; Docker Compose overrides `
 
 ## Testing
 
-- **Redis tests** (`store/redis_test.go`) — use `miniredis.RunT(t)`, no real Redis.
+- **Redis tests** (`store/redis_test.go`) — use `miniredis.RunT(t)`, no real Redis. Covers `TopNPage` pagination (first page, second page, offset beyond end, empty leaderboard).
 - **MySQL tests** (`store/mysql_test.go`) — use `go-sqlmock`, no real MySQL.
 - **Batcher tests** (`store/batcher_test.go`) — use `mockBatchStore`, no real stores.
-- **Service tests** (`service/leaderboard_test.go`) — mock structs with function fields for both stores.
+- **Service tests** (`service/leaderboard_test.go`) — mock structs with function fields for both stores. Covers `TopNPage` delegation.
+- **Handler tests** (`handler/leaderboard_test.go`) — cover default page, explicit page/page_size, invalid params (400), store error (500), empty leaderboard, and max page_size boundary.
 - **Config tests** (`config/config_test.go`) — set env vars via `t.Setenv`, test defaults/overrides/invalid int fallback.
 - **Middleware tests** (`middleware/auth_test.go`) — tests disabled (empty key), correct token, wrong token, and missing token cases.
 - **MySQL integration tests** (`store/mysql_integration_test.go`, build tag `integration`) — tests `NewMySQL`, schema migration, partition creation, `RecordEvent`, `RecordBatch`, `GetMonthlyScores` cross-month isolation, and `EnsureMonthPartition` idempotency against a real MySQL instance. Uses `leaderboard_test` database; skips gracefully if MySQL is unavailable.

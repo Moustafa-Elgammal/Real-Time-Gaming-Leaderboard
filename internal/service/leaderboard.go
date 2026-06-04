@@ -15,6 +15,7 @@ type EventRecorder interface {
 
 type ScoreStore interface {
 	TopN(n int) ([]store.UserRank, error)
+	TopNPage(offset, limit int) ([]store.UserRank, int64, error)
 	GetUserNeighborhood(username string) ([]store.UserRank, error)
 	IncrementScore(username string) error
 	IsRecovered() bool
@@ -32,6 +33,10 @@ func New(mysql EventRecorder, redis ScoreStore) *LeaderboardService {
 
 func (s *LeaderboardService) TopN(n int) ([]store.UserRank, error) {
 	return s.redis.TopN(n)
+}
+
+func (s *LeaderboardService) TopNPage(offset, limit int) ([]store.UserRank, int64, error) {
+	return s.redis.TopNPage(offset, limit)
 }
 
 func (s *LeaderboardService) GetUserNeighborhood(username string) ([]store.UserRank, error) {

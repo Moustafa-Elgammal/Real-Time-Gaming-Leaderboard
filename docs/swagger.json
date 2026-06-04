@@ -19,21 +19,43 @@
                         "InternalToken": []
                     }
                 ],
-                "description": "Returns the top TOP_N players for the current calendar month, ordered by score descending.",
+                "description": "Returns a page of players for the current calendar month, ordered by score descending. Defaults to page 1 with page_size equal to the TOP_N configuration value.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "leaderboard"
                 ],
-                "summary": "Get top scores",
+                "summary": "Get top scores (paginated)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Number of entries per page (1-100)",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/store.UserRank"
+                            "$ref": "#/definitions/handler.PagedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid page or page_size",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
                             }
                         }
                     },
@@ -150,6 +172,29 @@
         }
     },
     "definitions": {
+        "handler.PagedResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/store.UserRank"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 150
+                }
+            }
+        },
         "store.UserRank": {
             "type": "object",
             "properties": {

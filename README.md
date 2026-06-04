@@ -6,7 +6,7 @@ An internal HTTP service that tracks player scores and rankings in real time. It
 
 ## Core Features
 
-- **Live rankings** — Redis sorted sets serve top-N and player-neighborhood queries with sub-millisecond latency.
+- **Live rankings** — Redis sorted sets serve paginated top scores and player-neighborhood queries with sub-millisecond latency. The top-scores endpoint supports `?page` / `?page_size` (1–100) and returns a `total` player count alongside each page.
 - **Durable history** — Every score increment is persisted to MySQL as a `score_events` record before Redis is updated. If MySQL fails, Redis is not touched.
 - **Startup recovery** — On boot the service checks whether the current month's Redis key has already been populated. If not, it replays `score_events` from MySQL and rebuilds the sorted set. A recovery marker key prevents duplicate replays across multiple restarts or instances.
 - **High-throughput write batching** — Instead of one INSERT per request, an in-memory `EventBatcher` aggregates events and flushes them to MySQL in a single multi-value `INSERT` every 100 ms (or when the buffer reaches 500 events). At 5 000 writes/second this reduces MySQL insert rate from 5 000/s to roughly 10/s.
@@ -263,7 +263,7 @@ Redis is updated immediately so live rankings are always current. MySQL receives
 ### Read path
 
 ```
-GET /v1/scores            → Redis ZREVRANGEWITHSCORES (top N)
+GET /v1/scores            → Redis pipeline: ZREVRANGEWITHSCORES (page slice) + ZCARD (total)
 GET /v1/scores/:username  → Redis ZREVRANK + ZREVRANGEWITHSCORES (neighborhood)
 ```
 
@@ -309,21 +309,35 @@ Copy `.env.example` to `.env` and adjust as needed. When running via Docker Comp
 
 Base URL: `http://localhost:8080`
 
-### Get top scores
+### Get top scores (paginated)
 
-Returns the top `TOP_N` players for the current month, ordered by score descending.
+Returns a page of players for the current month, ordered by score descending.
 
 ```
-GET /v1/scores
+GET /v1/scores?page=1&page_size=10
 ```
+
+| Query param | Default | Constraints | Description |
+|-------------|---------|-------------|-------------|
+| `page` | `1` | ≥ 1 | Page number (1-based) |
+| `page_size` | `TOP_N` (env) | 1 – 100 | Entries per page |
 
 **Response `200 OK`**
 ```json
-[
-  { "rank": 1, "username": "alice", "score": 980 },
-  { "rank": 2, "username": "bob",   "score": 850 }
-]
+{
+  "data": [
+    { "rank": 1, "username": "alice", "score": 980 },
+    { "rank": 2, "username": "bob",   "score": 850 }
+  ],
+  "page":      1,
+  "page_size": 10,
+  "total":     150
+}
 ```
+
+`total` is the live count of distinct players on the current month's leaderboard. Requesting a page beyond the last entry returns an empty `data` array with the correct `total`.
+
+**Response `400 Bad Request`** — `page` or `page_size` is invalid.
 
 ---
 
@@ -469,7 +483,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 
 ### API & Developer Experience
 
-- [ ] **Pagination** — The top-N endpoint currently returns a fixed slice. Add `limit` and `offset` (or cursor-based) query parameters so clients can page through larger result sets.
+- [x] **Pagination** — `GET /v1/scores` accepts `?page` and `?page_size` (1–100). Response includes `data`, `page`, `page_size`, and `total` (live `ZCARD`). Out-of-range pages return an empty `data` array with the correct total.
 - [ ] **WebSocket / Server-Sent Events** — Push live ranking updates to connected clients instead of requiring polling. A Redis pub/sub channel can fan out score-change events to all connected SSE streams.
 - [ ] **Historical leaderboards** — Add `GET /v1/scores?year=2026&month=5` to serve past months. Reads from MySQL (`GetMonthlyScores`) since those Redis keys may have expired.
 - [ ] **gRPC internal API** — Expose a gRPC interface alongside the REST API for lower-latency service-to-service calls (e.g. from a game backend). Share Protobuf definitions as the contract.

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"example/real-time-gaming-leaderboard/internal/config"
 	"example/real-time-gaming-leaderboard/internal/store"
@@ -9,10 +10,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const maxPageSize = 100
+
 type Storer interface {
-	TopN(n int) ([]store.UserRank, error)
+	TopNPage(offset, limit int) ([]store.UserRank, int64, error)
 	GetUserNeighborhood(username string) ([]store.UserRank, error)
 	IncrementScore(username string) error
+}
+
+// PagedResponse wraps a leaderboard page with pagination metadata.
+type PagedResponse struct {
+	Data     []store.UserRank `json:"data"`
+	Page     int              `json:"page"      example:"1"`
+	PageSize int              `json:"page_size" example:"10"`
+	Total    int64            `json:"total"     example:"150"`
 }
 
 type Handler struct {
@@ -26,21 +37,42 @@ func New(s Storer, cfg *config.Config) *Handler {
 
 // TopN godoc
 //
-//	@Summary      Get top scores
-//	@Description  Returns the top TOP_N players for the current calendar month, ordered by score descending.
+//	@Summary      Get top scores (paginated)
+//	@Description  Returns a page of players for the current calendar month, ordered by score descending. Defaults to page 1 with page_size equal to the TOP_N configuration value.
 //	@Tags         leaderboard
 //	@Produce      json
 //	@Security     InternalToken
-//	@Success      200  {array}   store.UserRank
+//	@Param        page       query     int  false  "Page number (1-based)"        default(1)
+//	@Param        page_size  query     int  false  "Number of entries per page (1-100)"  default(10)
+//	@Success      200  {object}  handler.PagedResponse
+//	@Failure      400  {object}  map[string]string  "Invalid page or page_size"
 //	@Failure      500  {object}  map[string]string
 //	@Router       /v1/scores [get]
 func (h *Handler) TopN(c *gin.Context) {
-	ranks, err := h.store.TopN(h.topN)
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil || page < 1 {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "page must be a positive integer"})
+		return
+	}
+
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(h.topN)))
+	if err != nil || pageSize < 1 || pageSize > maxPageSize {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "page_size must be between 1 and 100"})
+		return
+	}
+
+	offset := (page - 1) * pageSize
+	ranks, total, err := h.store.TopNPage(offset, pageSize)
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.IndentedJSON(http.StatusOK, ranks)
+	c.IndentedJSON(http.StatusOK, PagedResponse{
+		Data:     ranks,
+		Page:     page,
+		PageSize: pageSize,
+		Total:    total,
+	})
 }
 
 // GetUserRank godoc

@@ -60,6 +60,31 @@ func (s *Store) TopN(n int) ([]UserRank, error) {
 	return ranks, nil
 }
 
+// TopNPage returns a page of players starting at offset (0-based) with the
+// given limit, plus the total number of players on the leaderboard.
+func (s *Store) TopNPage(offset, limit int) ([]UserRank, int64, error) {
+	key := s.currentKey()
+	pipe := s.client.Pipeline()
+	rangeCmd := pipe.ZRevRangeWithScores(s.ctx, key, int64(offset), int64(offset+limit-1))
+	cardCmd := pipe.ZCard(s.ctx, key)
+	if _, err := pipe.Exec(s.ctx); err != nil {
+		return nil, 0, err
+	}
+
+	results := rangeCmd.Val()
+	total := cardCmd.Val()
+
+	ranks := make([]UserRank, len(results))
+	for i, z := range results {
+		ranks[i] = UserRank{
+			Rank:     offset + i + 1,
+			Username: z.Member.(string),
+			Score:    int(z.Score),
+		}
+	}
+	return ranks, total, nil
+}
+
 // GetUserNeighborhood returns the user's rank along with the surrounding players.
 func (s *Store) GetUserNeighborhood(username string) ([]UserRank, error) {
 	pos, err := s.client.ZRevRank(s.ctx, s.currentKey(), username).Result()
