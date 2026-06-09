@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"example/real-time-gaming-leaderboard/internal/store"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/store"
 )
 
 type EventRecorder interface {

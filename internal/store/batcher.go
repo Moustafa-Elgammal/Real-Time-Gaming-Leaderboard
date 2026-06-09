@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"example/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
 )
 
 // batchStore is the subset of MySQLStore the batcher needs.

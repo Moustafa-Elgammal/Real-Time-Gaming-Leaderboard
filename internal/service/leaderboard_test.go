@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"example/real-time-gaming-leaderboard/internal/store"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/store"
 )
 
 // --- mocks ---

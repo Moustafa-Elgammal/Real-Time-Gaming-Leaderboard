@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"example/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
 
 	_ "github.com/go-sql-driver/mysql"
 )

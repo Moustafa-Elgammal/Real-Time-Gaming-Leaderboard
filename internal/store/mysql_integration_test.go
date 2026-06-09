@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"example/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
 )
 
 func integrationDSN() string {

@@ -20,12 +20,12 @@ import (
 	"syscall"
 	"time"
 
-	_ "example/real-time-gaming-leaderboard/docs"
-	"example/real-time-gaming-leaderboard/internal/config"
-	"example/real-time-gaming-leaderboard/internal/handler"
-	"example/real-time-gaming-leaderboard/internal/middleware"
-	"example/real-time-gaming-leaderboard/internal/service"
-	"example/real-time-gaming-leaderboard/internal/store"
+	_ "moustafa-elgammal/real-time-gaming-leaderboard/docs"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/handler"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/middleware"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/service"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"

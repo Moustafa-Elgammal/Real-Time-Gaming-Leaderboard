@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"example/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
 
 	"github.com/redis/go-redis/v9"
 )

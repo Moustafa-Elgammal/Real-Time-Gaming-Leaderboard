@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"example/real-time-gaming-leaderboard/internal/config"
-	"example/real-time-gaming-leaderboard/internal/store"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/store"
 
 	"github.com/gin-gonic/gin"
 )

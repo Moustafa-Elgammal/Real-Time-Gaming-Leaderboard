@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"example/real-time-gaming-leaderboard/internal/config"
+	"moustafa-elgammal/real-time-gaming-leaderboard/internal/config"
 
 	"github.com/alicebob/miniredis/v2"
 )
