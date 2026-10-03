@@ -169,6 +169,10 @@ All have defaults. Loaded from `.env` via `godotenv`; Docker Compose overrides `
 | `BATCH_FLUSH_MS` | `100` | Batcher flush interval in milliseconds |
 | `BATCH_SIZE` | `500` | Batcher buffer size that triggers immediate flush |
 | `INTERNAL_API_KEY` | `` | Shared secret with the game service; empty = auth disabled |
+| `DB_MAX_OPEN_CONNS` | `10` | MySQL pool max open connections |
+| `DB_MAX_IDLE_CONNS` | `5` | MySQL pool max idle connections |
+| `DB_CONN_MAX_LIFETIME_S` | `300` | MySQL connection max lifetime, seconds |
+| `DB_CONN_MAX_IDLE_TIME_S` | `120` | MySQL connection max idle time, seconds |
 
 ## Testing
 
@@ -193,6 +197,22 @@ Docker Compose (`docker-compose.yaml`) runs four services:
 | `mysql` | `mysql:8`, port 3306, healthcheck via `mysqladmin ping` |
 | `app` | depends on `redis` (started) + `mysql` (healthy), port 8080 |
 | `test` | profile `test`, runs `go test -v ./...` against mock stores |
+
+### Kubernetes (`k8s/`, branch `feature/k8s`)
+
+Deploy: `cp k8s/secret.example.yaml k8s/secret.yaml` (git-ignored), edit it, then `make -C k8s secret deploy`. Other targets: `status`, `scale N=..`, `delete`, `port-forward`.
+
+- `redis.yaml` and `mysql.yaml` run single-replica Deployments with PVCs. MySQL `--max-connections=500`: replicas x `DB_MAX_OPEN_CONNS` must stay below it.
+- `my-secret` holds all app env vars plus `MYSQL_ROOT_PASSWORD`. `DB_DSN` must use the same password.
+- `app-deployment.yaml` runs the app image `elgammalx/imagex:leaderboard` (same tag as the compose `app` service), 3 replicas, with readiness and liveness probes on `GET /healthz`. `/healthz` is registered before `InternalAuth` in `main.go` so probes work when `INTERNAL_API_KEY` is set. `terminationGracePeriodSeconds: 30` lets the batcher flush on SIGTERM.
+- `app-service.yaml` is named `app-backend`; the nginx upstream in `nginx-configmap.yaml` points at `app-backend:8080`. Renaming the Service requires updating the ConfigMap.
+- Not covered yet: Ingress or LoadBalancer, HPA, PodDisruptionBudget, versioned image tags, `/metrics`.
+- nginx fronts the app. Proxy buffering is off and `proxy_read_timeout` is 3600s because the SSE endpoint `GET /v1/scores/stream` must not be buffered or timed out.
+- `make -C k8s port-forward` exposes nginx on `localhost:8080`.
+
+### Load testing
+
+`k6/` (scripts, utils, reports) and `grafana/` (provisioned dashboards) back the `load-test` compose profile (influxdb, grafana, k6). See the comments in `docker-compose.yaml` for the run commands.
 
 The `http.http` file contains JetBrains HTTP Client requests for manual endpoint testing.
 
