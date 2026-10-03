@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  # 3 replicas x DB_MAX_OPEN_CONNS (10) = 30 MySQL connections. Scale with: make scale N=..
+  replicas: 3
+  selector:
+    matchLabels:
+      app: app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      # Gives the batcher time to flush its buffer to MySQL on SIGTERM.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: app
+          image: elgammalx/imagex:leaderboard
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: my-secret
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      restartPolicy: Always
