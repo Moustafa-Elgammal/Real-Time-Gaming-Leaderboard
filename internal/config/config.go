@@ -16,6 +16,11 @@ type Config struct {
 	BatchFlushMS      int
 	BatchSize         int
 	InternalAPIKey    string // shared secret with the upstream game service; empty = no auth
+
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxLifetime int // seconds
+	DBConnMaxIdleTime int // seconds
 }
 
 func Load() *Config {
@@ -30,6 +35,11 @@ func Load() *Config {
 		BatchFlushMS:      getEnvInt("BATCH_FLUSH_MS", 100),
 		BatchSize:         getEnvInt("BATCH_SIZE", 500),
 		InternalAPIKey:    getEnv("INTERNAL_API_KEY", ""),
+
+		DBMaxOpenConns:    getEnvInt("DB_MAX_OPEN_CONNS", 10),
+		DBMaxIdleConns:    getEnvInt("DB_MAX_IDLE_CONNS", 5),
+		DBConnMaxLifetime: getEnvInt("DB_CONN_MAX_LIFETIME_S", 300),
+		DBConnMaxIdleTime: getEnvInt("DB_CONN_MAX_IDLE_TIME_S", 120),
 	}
 }
 

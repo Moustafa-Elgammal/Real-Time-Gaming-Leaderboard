@@ -56,6 +56,8 @@ func main() {
 	h := handler.New(svc, cfg)
 
 	router := gin.Default()
+	// Registered before InternalAuth so kubelet probes work when INTERNAL_API_KEY is set.
+	router.GET("/healthz", func(c *gin.Context) { c.Status(http.StatusOK) })
 	router.Use(middleware.InternalAuth(cfg.InternalAPIKey))
 	router.GET("/v1/scores", h.TopN)
 	router.GET("/v1/scores/stream", h.StreamScoreUpdates)

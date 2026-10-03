@@ -37,6 +37,41 @@ go run .
 
 ---
 
+## Kubernetes Deployment
+
+The `k8s/` directory deploys the full stack: the app (3 replicas), Redis, MySQL, and an nginx reverse proxy in front of the app. nginx has proxy buffering disabled and a 3600 s read timeout so the SSE stream (`GET /v1/scores/stream`) works through it.
+
+```
+client -> nginx (svc/nginx:80) -> app-backend (svc:8080, 3 pods) -> redis, mysql
+```
+
+### Deploy
+
+```bash
+cp k8s/secret.example.yaml k8s/secret.yaml   # git-ignored; edit the passwords and INTERNAL_API_KEY
+make -C k8s secret deploy
+make -C k8s port-forward                     # nginx on http://localhost:8080
+```
+
+| Target | What it does |
+|--------|--------------|
+| `make -C k8s secret` | Creates or updates `my-secret` from `k8s/secret.yaml` |
+| `make -C k8s deploy` | Applies Redis and MySQL, waits for them, then applies the app and nginx |
+| `make -C k8s status` | Lists deployments, pods, services, and PVCs |
+| `make -C k8s scale N=10` | Scales the app. Keep `N x DB_MAX_OPEN_CONNS` below MySQL `--max-connections` (500) |
+| `make -C k8s delete` | Removes workloads. PVCs and the secret are kept |
+| `make -C k8s port-forward` | Forwards `localhost:8080` to nginx |
+
+### Notes
+
+- All app configuration comes from the `my-secret` Secret. `DB_DSN` must use the same password as `MYSQL_ROOT_PASSWORD`.
+- App pods use readiness and liveness probes on `GET /healthz`. The endpoint bypasses `InternalAuth`, so probes work when `INTERNAL_API_KEY` is set.
+- Rolling updates keep every pod serving (`maxUnavailable: 0`). `terminationGracePeriodSeconds: 30` gives the batcher time to flush to MySQL on shutdown.
+- Redis runs with AOF enabled on a PVC. Redis and MySQL are single replicas with no backups yet.
+- Not included yet: Ingress or LoadBalancer, HPA, PodDisruptionBudget, versioned image tags, `/metrics`.
+
+---
+
 ## Swagger UI
 
 The service embeds a Swagger UI that documents every endpoint, shows request/response schemas, and lets you fire live requests directly from the browser.
@@ -212,6 +247,7 @@ k6/utils/helpers.js                          — shared k6 utilities: auth param
 k6/reports/                                  — runtime output: HTML + JSON summaries written after each test run
 grafana/provisioning/                        — auto-provisioned InfluxDB datasource and dashboard directory config
 grafana/dashboards/k6-leaderboard.json       — pre-built Grafana dashboard for k6 results
+k8s/                                         — Kubernetes manifests (app, redis, mysql, nginx, secret template) and Makefile
 Dockerfile                                   — multi-stage production image (Go builder → alpine final, includes wget)
 Dockerfile.test                              — test runner image (Go toolchain, no binary)
 docker-compose.yaml                          — redis + mysql + app + test + load-test stack (influxdb, grafana, k6)
@@ -304,12 +340,26 @@ Copy `.env.example` to `.env` and adjust as needed. When running via Docker Comp
 | `BATCH_FLUSH_MS` | `100` | How often (ms) the batcher flushes buffered events to MySQL |
 | `BATCH_SIZE` | `500` | Buffer size that triggers an immediate flush regardless of the timer |
 | `INTERNAL_API_KEY` | *(empty)* | Shared secret with the upstream game service. When set, all requests must include `X-Internal-Token: <key>`. Empty = auth disabled (local dev). |
+| `DB_MAX_OPEN_CONNS` | `10` | MySQL pool: max open connections per instance |
+| `DB_MAX_IDLE_CONNS` | `5` | MySQL pool: max idle connections per instance |
+| `DB_CONN_MAX_LIFETIME_S` | `300` | MySQL pool: connection max lifetime in seconds |
+| `DB_CONN_MAX_IDLE_TIME_S` | `120` | MySQL pool: connection max idle time in seconds |
 
 ---
 
 ## API
 
 Base URL: `http://localhost:8080`
+
+### Health check
+
+```
+GET /healthz
+```
+
+Returns `200 OK` with an empty body while the process is up. It is not behind `X-Internal-Token` and is used by the Kubernetes probes. It does not check Redis or MySQL.
+
+---
 
 ### Get top scores (paginated)
 
@@ -462,8 +512,8 @@ Items below are planned improvements toward a production-grade, fully scalable l
 
 ### Infrastructure & Deployment
 
-- [ ] **Load balancer** — Place an L7 load balancer (e.g. AWS ALB, Nginx, or HAProxy) in front of multiple app replicas. The service is stateless (all state lives in Redis and MySQL) so any instance can handle any request. Sticky sessions are not needed.
-- [ ] **Kubernetes (K8s)** — Package the app as a K8s `Deployment` with a `HorizontalPodAutoscaler` (HPA) that scales on CPU/RPS metrics. Use `PodDisruptionBudget` to keep at least one replica available during rolling updates.
+- [x] **Load balancer** — nginx runs in front of the app replicas in Kubernetes (SSE-safe config). The service is stateless (all state lives in Redis and MySQL) so any instance can handle any request. Sticky sessions are not needed. An external Ingress or cloud load balancer is still to do.
+- [ ] **Kubernetes (K8s)** — Deployment, Services, probes, resource limits, Redis, MySQL, and nginx are done (see [Kubernetes Deployment](#kubernetes-deployment)). Still to do: `HorizontalPodAutoscaler` scaling on CPU/RPS, and a `PodDisruptionBudget` to keep at least one replica available during rolling updates.
 - [ ] **Helm chart** — Wrap the K8s manifests in a Helm chart for environment-specific overrides (staging vs. production resource limits, replica counts, DSN secrets).
 - [ ] **CI/CD pipeline** — GitHub Actions (or equivalent) that runs `go test ./...`, builds the Docker image, pushes to a registry, and triggers a rolling deploy. Add a gate that blocks deploy if test coverage drops below a threshold.
 - [x] **Load testing (k6)** — k6 scripts for write stress, read throughput, neighborhood queries, and spike scenarios. Results stream to InfluxDB with a provisioned Grafana dashboard. HTML + JSON reports written to `k6/reports/` after each run. See [Load Testing](#load-testing-k6).
@@ -476,7 +526,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 
 - [ ] **Redis Cluster** — Shard sorted sets across multiple Redis nodes using consistent hashing. At 50 M users a single sorted set fits in memory (~3–4 GB) but a cluster removes the single-point-of-failure and allows horizontal read scaling.
 - [ ] **Redis Sentinel / managed Redis** — Use Redis Sentinel (or AWS ElastiCache with auto-failover) for automatic leader election on primary failure. Update the client to use the Sentinel endpoint instead of a single address.
-- [ ] **Redis persistence** — Enable AOF (append-only file) with `appendfsync everysec` on the Redis primary so the sorted set survives a Redis restart without needing a full MySQL replay. Complements but does not replace the existing `:recovered` recovery mechanism.
+- [x] **Redis persistence** — AOF is enabled (`--appendonly yes`) on a PVC in the Kubernetes manifests. Still to do: set `appendfsync everysec` explicitly on the Redis primary so the sorted set survives a Redis restart without needing a full MySQL replay. Complements but does not replace the existing `:recovered` recovery mechanism.
 - [ ] **Key expiry / archiving** — Set a TTL (e.g. 90 days) on old monthly sorted set keys to reclaim Redis memory automatically. Optionally export expired keys to cold storage (S3 + Parquet) before expiry for historical analytics.
 - [ ] **Leaderboard segmentation** — Support multiple concurrent leaderboards (per-game, per-region, per-tournament) by parameterizing the key prefix beyond `LEADERBOARD_PREFIX`. Route writes and reads to the correct key without changing the sorted-set data model.
 
@@ -497,7 +547,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 - [ ] **Prometheus metrics** — Expose a `/metrics` endpoint. Track: request rate, error rate, handler latency (p50/p99), batcher buffer depth, batcher flush duration, MySQL insert latency, Redis command latency.
 - [ ] **Grafana dashboards (production)** — Wire Prometheus to Grafana for production metrics (four golden signals: latency, traffic, errors, saturation). A Grafana instance is already provisioned for k6 load testing (see [Load Testing](#load-testing-k6)); extend it with app-level metrics once Prometheus is wired.
 - [ ] **Alerting** — Set up Alertmanager (or PagerDuty) rules: error rate > 1 %, p99 latency > 200 ms, Redis memory > 80 %, MySQL replication lag > 30 s, batcher flush failures.
-- [ ] **Health endpoints** — Add `/healthz` (liveness: is the process alive?) and `/readyz` (readiness: can it serve traffic — Redis ping + MySQL ping both succeed?). K8s uses these for pod lifecycle management.
+- [ ] **Health endpoints** — `/healthz` (liveness and readiness) is done and used by the K8s probes. Still to do: `/readyz` (readiness: can it serve traffic — Redis ping + MySQL ping both succeed?).
 
 ---
 
@@ -517,7 +567,7 @@ Items below are planned improvements toward a production-grade, fully scalable l
 ### MySQL Scalability
 
 - [ ] **Read replicas** — Add one or more MySQL read replicas. Direct `GetMonthlyScores` (used during recovery) to a replica to offload the primary.
-- [ ] **Connection pooling** — Tune `sql.DB.SetMaxOpenConns`, `SetMaxIdleConns`, and `SetConnMaxLifetime` based on measured concurrency. For very high connection counts consider a connection pooler (ProxySQL or PgBouncer-equivalent).
+- [x] **Connection pooling** — `sql.DB` pool limits are configurable via `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_LIFETIME_S`, and `DB_CONN_MAX_IDLE_TIME_S`. Still to do: tune them from measured concurrency, and for very high connection counts consider a connection pooler (ProxySQL).
 - [ ] **Automated partition management** — Schedule a monthly cron job (K8s `CronJob`) that calls `EnsureMonthPartition` for the upcoming month, replacing the current at-startup approach which only runs when the app restarts.
 - [ ] **Partition archiving** — After a retention window (e.g. 6 months), `ALTER TABLE … DROP PARTITION p{year}_{month}` or export the partition to cold storage (S3) and drop it. This keeps the table size bounded.
 - [ ] **MySQL backup & point-in-time recovery** — Enable binary logging and schedule regular `mysqldump` or snapshot backups. Test restore procedures. Use managed MySQL (RDS, Cloud SQL) for automated backups and failover in production.

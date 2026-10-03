@@ -20,6 +20,7 @@ services:
 
   app:
     build: .
+    image: elgammalx/imagex:leaderboard
     ports:
       - "8080:8080"
     env_file:
@@ -95,12 +96,12 @@ services:
       - ./k6/reports:/reports
     environment:
       - K6_OUT=influxdb=http://influxdb:8086/k6
-      - BASE_URL=http://app:8080
+      - BASE_URL=http://host.docker.internal:8080
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: run /scripts/full-suite.js
     depends_on:
-      app:
-        condition: service_healthy
       influxdb:
         condition: service_started
 
