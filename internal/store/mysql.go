@@ -22,6 +22,11 @@ func NewMySQL(cfg *config.Config) (*MySQLStore, error) {
 		return nil, fmt.Errorf("open mysql: %w", err)
 	}
 
+	db.SetMaxOpenConns(cfg.DBMaxOpenConns)
+	db.SetMaxIdleConns(cfg.DBMaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.DBConnMaxLifetime) * time.Second)
+	db.SetConnMaxIdleTime(time.Duration(cfg.DBConnMaxIdleTime) * time.Second)
+
 	for i := range 10 {
 		if err = db.Ping(); err == nil {
 			break
